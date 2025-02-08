@@ -36,3 +36,17 @@ To develop for Squoosh:
 Squoosh is an open-source project that appreciates all community involvement. To contribute to the project, follow the [contribute guide](/CONTRIBUTING.md).
 
 [squoosh]: https://squoosh.app
+
+# github pr
+
+```bash
+# Don't render "OR Paste" when Clipboard API is unsupported #945
+gh pr checkout 945
+
+# Allow dragging out files to desktop #918
+gh pr checkout 918
+
+# Solves: center image after typing zoom value #1256
+gh pr checkout 1256
+
+```
