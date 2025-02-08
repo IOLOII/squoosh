@@ -10,8 +10,6 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
-import * as WebCodecs from '../util/web-codecs';
 import { drawableToImageData } from './canvas';
 
 /** If render engine is Safari */
@@ -105,6 +103,7 @@ const magicNumberMapInput = [
   [/^\x00\x00\x00 ftypavif\x00\x00\x00\x00/, 'image/avif'],
   [/^\xff\x0a/, 'image/jxl'],
   [/^\x00\x00\x00\x0cJXL \x0d\x0a\x87\x0a/, 'image/jxl'],
+  [/^qoif/, 'image/qoi'],
 ] as const;
 
 export type ImageMimeTypes = typeof magicNumberMapInput[number][1];
@@ -139,15 +138,7 @@ export async function blobToImg(blob: Blob): Promise<HTMLImageElement> {
 export async function builtinDecode(
   signal: AbortSignal,
   blob: Blob,
-  mimeType: string,
 ): Promise<ImageData> {
-  // If WebCodecs are supported, use that.
-  if (await WebCodecs.isTypeSupported(mimeType)) {
-    assertSignal(signal);
-    try {
-      return await abortable(signal, WebCodecs.decode(blob, mimeType));
-    } catch (e) {}
-  }
   assertSignal(signal);
 
   // Prefer createImageBitmap as it's the off-thread option for Firefox.
