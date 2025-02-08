@@ -31,7 +31,6 @@ import Results from './Results';
 import WorkerBridge from '../worker-bridge';
 import { resize } from 'features/processors/resize/client';
 import type SnackBarElement from 'shared/custom-els/snack-bar';
-import { generateCliInvocation } from '../util/cli';
 import { drawableToImageData } from '../util/canvas';
 
 export type OutputType = EncoderType | 'identity';
@@ -112,9 +111,12 @@ async function decodeImage(
       if (mimeType === 'image/webp2') {
         return await workerBridge.wp2Decode(signal, blob);
       }
+      if (mimeType === 'image/qoi') {
+        return await workerBridge.qoiDecode(signal, blob);
+      }
     }
     // Otherwise fall through and try built-in decoding for a laugh.
-    return await builtinDecode(signal, blob, mimeType);
+    return await builtinDecode(signal, blob);
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') throw err;
     console.log(err);
@@ -282,24 +284,35 @@ export default class Compress extends Component<Props, State> {
     source: undefined,
     loading: false,
     preprocessorState: defaultPreprocessorState,
+    // Tasking catched side settings if available otherwise taking default settings
     sides: [
-      {
-        latestSettings: {
-          processorState: defaultProcessorState,
-          encoderState: undefined,
-        },
-        loading: false,
-      },
-      {
-        latestSettings: {
-          processorState: defaultProcessorState,
-          encoderState: {
-            type: 'mozJPEG',
-            options: encoderMap.mozJPEG.meta.defaultOptions,
+      localStorage.getItem('leftSideSettings')
+        ? {
+            ...JSON.parse(localStorage.getItem('leftSideSettings') as string),
+            loading: false,
+          }
+        : {
+            latestSettings: {
+              processorState: defaultProcessorState,
+              encoderState: undefined,
+            },
+            loading: false,
           },
-        },
-        loading: false,
-      },
+      localStorage.getItem('rightSideSettings')
+        ? {
+            ...JSON.parse(localStorage.getItem('rightSideSettings') as string),
+            loading: false,
+          }
+        : {
+            latestSettings: {
+              processorState: defaultProcessorState,
+              encoderState: {
+                type: 'mozJPEG',
+                options: encoderMap.mozJPEG.meta.defaultOptions,
+              },
+            },
+            loading: false,
+          },
     ],
     mobileView: this.widthQuery.matches,
   };
@@ -429,6 +442,99 @@ export default class Compress extends Component<Props, State> {
       sides: cleanSet(this.state.sides, otherIndex, oldSettings),
     });
   };
+  /**
+   * This function saves encodedSettings and latestSettings of
+   * particular side in browser local storage
+   * @param index : (0|1)
+   * @returns
+   */
+  private onSaveSideSettingsClick = async (index: 0 | 1) => {
+    if (index === 0) {
+      const leftSideSettings = JSON.stringify({
+        encodedSettings: this.state.sides[index].encodedSettings,
+        latestSettings: this.state.sides[index].latestSettings,
+      });
+      localStorage.setItem('leftSideSettings', leftSideSettings);
+      // Firing an event when we save side settings in localstorage
+      window.dispatchEvent(new CustomEvent('leftSideSettings'));
+      await this.props.showSnack('Left side settings saved', {
+        timeout: 1500,
+        actions: ['dismiss'],
+      });
+      return;
+    }
+
+    if (index === 1) {
+      const rightSideSettings = JSON.stringify({
+        encodedSettings: this.state.sides[index].encodedSettings,
+        latestSettings: this.state.sides[index].latestSettings,
+      });
+      localStorage.setItem('rightSideSettings', rightSideSettings);
+      // Firing an event when we save side settings in localstorage
+      window.dispatchEvent(new CustomEvent('rightSideSettings'));
+      await this.props.showSnack('Right side settings saved', {
+        timeout: 1500,
+        actions: ['dismiss'],
+      });
+      return;
+    }
+  };
+
+  /**
+   * This function sets the side state with catched localstorage
+   * value as per side index provided
+   * @param index : (0|1)
+   * @returns
+   */
+  private onImportSideSettingsClick = async (index: 0 | 1) => {
+    const leftSideSettingsString = localStorage.getItem('leftSideSettings');
+    const rightSideSettingsString = localStorage.getItem('rightSideSettings');
+
+    if (index === 0 && leftSideSettingsString) {
+      const oldLeftSideSettings = this.state.sides[index];
+      const newLeftSideSettings = {
+        ...this.state.sides[index],
+        ...JSON.parse(leftSideSettingsString),
+      };
+      this.setState({
+        sides: cleanSet(this.state.sides, index, newLeftSideSettings),
+      });
+      const result = await this.props.showSnack('Left side settings imported', {
+        timeout: 3000,
+        actions: ['undo', 'dismiss'],
+      });
+      if (result === 'undo') {
+        this.setState({
+          sides: cleanSet(this.state.sides, index, oldLeftSideSettings),
+        });
+      }
+      return;
+    }
+
+    if (index === 1 && rightSideSettingsString) {
+      const oldRightSideSettings = this.state.sides[index];
+      const newRightSideSettings = {
+        ...this.state.sides[index],
+        ...JSON.parse(rightSideSettingsString),
+      };
+      this.setState({
+        sides: cleanSet(this.state.sides, index, newRightSideSettings),
+      });
+      const result = await this.props.showSnack(
+        'Right side settings imported',
+        {
+          timeout: 3000,
+          actions: ['undo', 'dismiss'],
+        },
+      );
+      if (result === 'undo') {
+        this.setState({
+          sides: cleanSet(this.state.sides, index, oldRightSideSettings),
+        });
+      }
+      return;
+    }
+  };
 
   private onPreprocessorChange = async (
     preprocessorState: PreprocessorState,
@@ -460,29 +566,6 @@ export default class Compress extends Component<Props, State> {
             );
           }) as [Side, Side]),
     }));
-  };
-
-  private onCopyCliClick = async (index: 0 | 1) => {
-    try {
-      const cliInvocation = generateCliInvocation(
-        this.state.sides[index].latestSettings.encoderState!,
-        this.state.sides[index].latestSettings.processorState,
-      );
-      await navigator.clipboard.writeText(cliInvocation);
-      const result = await this.props.showSnack(
-        'CLI command copied to clipboard',
-        {
-          timeout: 8000,
-          actions: ['usage', 'dismiss'],
-        },
-      );
-
-      if (result === 'usage') {
-        open('https://github.com/GoogleChromeLabs/squoosh/tree/dev/cli');
-      }
-    } catch (e) {
-      this.props.showSnack(String(e));
-    }
   };
 
   /**
@@ -852,8 +935,9 @@ export default class Compress extends Component<Props, State> {
         onEncoderTypeChange={this.onEncoderTypeChange}
         onEncoderOptionsChange={this.onEncoderOptionsChange}
         onProcessorOptionsChange={this.onProcessorOptionsChange}
-        onCopyCliClick={this.onCopyCliClick}
         onCopyToOtherSideClick={this.onCopyToOtherClick}
+        onSaveSideSettingsClick={this.onSaveSideSettingsClick}
+        onImportSideSettingsClick={this.onImportSideSettingsClick}
       />
     ));
 
@@ -867,7 +951,7 @@ export default class Compress extends Component<Props, State> {
         typeLabel={
           side.latestSettings.encoderState
             ? encoderMap[side.latestSettings.encoderState.type].meta.label
-            : 'Original Image'
+            : `${side.file ? `${side.file.name}` : 'Original Image'}`
         }
       />
     ));
